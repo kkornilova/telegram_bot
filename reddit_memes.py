@@ -1,7 +1,7 @@
 import praw
 import os
 from dotenv import load_dotenv
-from random import choice
+
 
 load_dotenv()
 
@@ -14,16 +14,25 @@ reddit = praw.Reddit(
 telegram_supported_extensions = ["jpg", "png"]
 meme_urls = []
 
+parameters = {
+}
+
 
 def get_telegram_supported_urls():
+    global parameters
     subreddit = reddit.subreddit("memes")
-    all_posts = subreddit.top(limit=20)
+    all_posts = subreddit.top(time_filter="year", limit=5, params=parameters)
+
+    parameters = all_posts.params
+
     meme_urls.extend([post.url for post in all_posts if post.url[-3:]
                       in telegram_supported_extensions])
+
+    if not meme_urls:
+        get_telegram_supported_urls()
 
 
 def get_reddit_meme():
     if not meme_urls:
         get_telegram_supported_urls()
-
     return meme_urls.pop()

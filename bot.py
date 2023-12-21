@@ -3,7 +3,6 @@ from dotenv import load_dotenv
 import telebot
 from telebot import types
 import time
-from random import choice
 import re
 from reddit_memes import get_reddit_meme
 
