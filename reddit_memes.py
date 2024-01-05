@@ -1,7 +1,6 @@
-import praw
 import os
 from dotenv import load_dotenv
-
+import praw
 
 load_dotenv()
 
@@ -11,28 +10,29 @@ reddit = praw.Reddit(
     user_agent=os.environ.get("REDDIT_USER_AGENT")
 )
 
-telegram_supported_extensions = ["jpg", "png"]
-meme_urls = []
 
-parameters = {
-}
+class MemeGenerator:
+    telegram_supported_extensions = ["jpg", "png"]
+    parameters = {}
+    meme_urls = []
 
+    def __init__(self, meme_api: praw.Reddit):
+        self.meme_api = meme_api
 
-def get_telegram_supported_urls():
-    global parameters
-    subreddit = reddit.subreddit("memes")
-    all_posts = subreddit.top(time_filter="year", limit=5, params=parameters)
+    def get_telegram_supported_urls(self):
+        subreddit = self.meme_api.subreddit("memes")
+        all_posts = subreddit.top(
+            time_filter="year", limit=5, params=self.parameters)
 
-    parameters = all_posts.params
+        self.parameters = all_posts.params
 
-    meme_urls.extend([post.url for post in all_posts if post.url[-3:]
-                      in telegram_supported_extensions])
+        self.meme_urls.extend([post.url for post in all_posts if post.url[-3:]
+                               in MemeGenerator.telegram_supported_extensions])
 
-    if not meme_urls:
-        get_telegram_supported_urls()
+        if not self.meme_urls:
+            self.get_telegram_supported_urls()
 
-
-def get_reddit_meme():
-    if not meme_urls:
-        get_telegram_supported_urls()
-    return meme_urls.pop()
+    def get_reddit_meme(self):
+        if not self.meme_urls:
+            self.get_telegram_supported_urls()
+        return self.meme_urls.pop()
