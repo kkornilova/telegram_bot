@@ -20,8 +20,12 @@ time_unit_to_sec_map = {
 
 
 class Bot:
-    actions = "/get_meme - get meme\n/say_hello - get greetings regularly"
+    commands_map = {"/get_meme": "- get meme",
+                    "/say_hello": "- get greetings regularly",
+                    "/help": "- help"}
+
     is_subscribed = False
+    sent_greetings = 0
 
     def __init__(self, meme_generator: MemeGenerator, bot_token):
         self.bot = telebot.TeleBot(bot_token)
@@ -44,20 +48,28 @@ class Bot:
         self.bot.message_handler(
             commands=["stop"])(self.stop)
         self.bot.message_handler(
+            commands=["count_greetings"])(self.count_received_greetings)
+        self.bot.message_handler(
             func=lambda msg: True)(self.unknown_command)
+
+    def format_commands_map(self):
+        formatted = ''
+        for k, v in self.commands_map.items():
+            formatted += k + v + "\n"
+        return formatted
 
     def send_welcome(self, message):
         self.bot.send_message(message.chat.id, "Hi there!👋 How can I help you?\n"
-                              "/help - help\n" + self.actions)
+                              + self.format_commands_map())
 
     def help(self, message):
         self.bot.send_message(
-            message.chat.id, f"😎 I can do many different things! Choose one of the commands below:\n{self.actions}")
+            message.chat.id, f"😎 I can do many different things! Choose one of the commands below:\n{self.format_commands_map()}")
 
     def get_name(self, message):
         if self.is_subscribed:
             self.bot.send_message(
-                message.chat.id, "Sorry, but you can get the greetings only once. Stop the previous command to start the new one.")
+                message.chat.id, "Sorry, but you can get the greetings only once.\n Stop the previous command to start the new one.")
             return
 
         msg = self.bot.send_message(message.chat.id, "How can I call you?")
@@ -114,10 +126,19 @@ class Bot:
 
     def say_hello(self, message, name, interval_seconds):
         if self.is_subscribed:
-            self.bot.send_message(message.chat.id, f"Hello {
-                name.title()}!❤️ \n\n*to stop sending - click:  /stop")
+            self.bot.send_message(message.chat.id,
+                                  f"Hello {name.title()}!❤️ \n\n to stop sending - click:  /stop,\n to see the number of received greetings - click: /count_greetings")
+            self.sent_greetings += 1
             time.sleep(interval_seconds)
             self.say_hello(message, name, interval_seconds)
+
+    def count_received_greetings(self, message):
+        if self.sent_greetings:
+            self.bot.send_message(message.chat.id,
+                                  f"You've got {self.sent_greetings} greeting(s).")
+
+        else:
+            self.bot.send_message(message.chat.id, "You are not subscribed.")
 
     def cancel_command(self, message):
         if self.is_subscribed:
@@ -127,12 +148,12 @@ class Bot:
 
     def get_meme(self, message):
         self.bot.send_photo(
-            message.chat.id, self.meme_generator.get_reddit_meme(), self.actions)
+            message.chat.id, self.meme_generator.get_reddit_meme(), self.format_commands_map())
 
     def stop(self, message):
         self.is_subscribed = False
         self.bot.send_message(
-            message.chat.id, "Sending is stopped😉\n" + self.actions)
+            message.chat.id, "Sending is stopped😉\n" + self.format_commands_map())
 
     def unknown_command(self, message):
         self.bot.send_message(
