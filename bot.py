@@ -1,14 +1,9 @@
 import os
-from dotenv import load_dotenv
 
 import telebot
-
-from reddit_memes import MemeGenerator, reddit
-
+import threading
 import time
 import re
-
-load_dotenv()
 
 
 time_unit_to_sec_map = {
@@ -24,10 +19,10 @@ class Bot:
                     "/say_hello": "- get greetings regularly",
                     "/help": "- help"}
 
-    is_subscribed = False
-    sent_greetings = 0
+    sent_greetings_counter = {}
+    subscribed_users = {}
 
-    def __init__(self, meme_generator: MemeGenerator, bot_token):
+    def __init__(self, meme_generator, bot_token):
         self.bot = telebot.TeleBot(bot_token)
         self.meme_generator = meme_generator
         self.init_commands()
@@ -50,6 +45,8 @@ class Bot:
         self.bot.message_handler(
             commands=["count_greetings"])(self.count_received_greetings)
         self.bot.message_handler(
+            commands=["get_list_of_subscribers"])(self.get_password)
+        self.bot.message_handler(
             func=lambda msg: True)(self.unknown_command)
 
     def format_commands_map(self):
@@ -67,9 +64,11 @@ class Bot:
             message.chat.id, f"😎 I can do many different things! Choose one of the commands below:\n{self.format_commands_map()}")
 
     def get_name(self, message):
-        if self.is_subscribed:
-            self.bot.send_message(
-                message.chat.id, "Sorry, but you can get the greetings only once.\n Stop the previous command to start the new one.")
+        user_id = message.from_user.id
+
+        if user_id in self.subscribed_users:
+            self.bot.send_message(message.chat.id,
+                                  "Sorry, but you can get the greetings only once.\n\nStop the previous command to start the new one - /stop")
             return
 
         msg = self.bot.send_message(message.chat.id, "How can I call you?")
@@ -120,47 +119,96 @@ class Bot:
 
         interval_seconds = number_unit * time_unit_to_sec_map[time_unit_key]
 
-        self.is_subscribed = True
+        user_id = message.from_user.id
+        username = message.from_user.username
 
-        self.say_hello(message, name, interval_seconds)
+        self.subscribed_users[user_id] = username
+
+        thread = threading.Thread(target=self.say_hello, args=(
+            message, name, interval_seconds))
+        thread.start()
 
     def say_hello(self, message, name, interval_seconds):
-        if self.is_subscribed:
-            self.bot.send_message(message.chat.id,
-                                  f"Hello {name.title()}!❤️ \n\n to stop sending - click:  /stop,\n to see the number of received greetings - click: /count_greetings")
-            self.sent_greetings += 1
-            time.sleep(interval_seconds)
-            self.say_hello(message, name, interval_seconds)
+        user_id = message.from_user.id
 
-    def count_received_greetings(self, message):
-        if self.sent_greetings:
-            self.bot.send_message(message.chat.id,
-                                  f"You've got {self.sent_greetings} greeting(s).")
+        if user_id not in self.subscribed_users:
+            return
+
+        self.bot.send_message(message.chat.id,
+                              f"Hello {name.title()}!❤️ \n\n to stop sending - click:  /stop,\n to see the number of received greetings - click: /count_greetings")
+
+        if user_id in self.sent_greetings_counter:
+            self.sent_greetings_counter[user_id] += 1
 
         else:
+            self.sent_greetings_counter[user_id] = 1
+
+        time.sleep(interval_seconds)
+        self.say_hello(message, name, interval_seconds)
+
+    def count_received_greetings(self, message):
+        user_id = message.from_user.id
+
+        if user_id not in self.sent_greetings_counter:
             self.bot.send_message(message.chat.id, "You are not subscribed.")
+            return
+
+        self.bot.send_message(message.chat.id,
+                              f"You've got {self.sent_greetings_counter[user_id]} greeting(s).")
+
+    def get_password(self, message):
+        msg = self.bot.send_message(message.chat.id, "Enter password: ")
+        self.bot.register_next_step_handler(msg, self.check_password)
+
+    def check_password(self, message):
+        if message.text.startswith('/'):
+            self.bot.process_new_messages([message])
+            return
+        if message.text != os.environ.get("bot_password"):
+            self.bot.send_message(message.chat.id,
+                                  "Wrong password! Try again or click /cancel")
+            self.get_password(message)
+            return
+
+        self.show_list_of_subscribers(message)
+
+    def show_list_of_subscribers(self, message):
+
+        if len(self.subscribed_users) == 0:
+            self.bot.send_message(
+                message.chat.id, "No subscribers at that moment")
+            return
+
+        sub_list = ''
+        for username in self.subscribed_users.values():
+            sub_list += username + "\n"
+        self.bot.send_message(
+            message.chat.id, "Subscribers: " + "\n\n" + sub_list)
 
     def cancel_command(self, message):
-        if self.is_subscribed:
-            self.is_subscribed = False
-            self.bot.reply_to(
-                message, "The command was successfully canceled!")
+        user_id = message.from_user.id
+        if user_id in self.subscribed_users:
+            self.subscribed_users.pop(user_id)
+        self.bot.reply_to(
+            message, "The command was successfully canceled!")
 
     def get_meme(self, message):
         self.bot.send_photo(
             message.chat.id, self.meme_generator.get_reddit_meme(), self.format_commands_map())
 
     def stop(self, message):
-        self.is_subscribed = False
+        user_id = message.from_user.id
+
+        if user_id not in self.subscribed_users:
+            self.bot.send_message(
+                message.chat.id, "You're not subscribed.")
+            return
+
+        self.subscribed_users.pop(user_id)
+
         self.bot.send_message(
             message.chat.id, "Sending is stopped😉\n" + self.format_commands_map())
 
     def unknown_command(self, message):
         self.bot.send_message(
             message.chat.id, f"😶‍🌫️ Sorry, I don't understand your command: {message.text}.\nTry /help to see available commands.")
-
-
-if __name__ == "__main__":
-    meme_generator = MemeGenerator(reddit)
-    BOT_TOKEN = os.environ.get("BOT_TOKEN")
-    bot_cl = Bot(meme_generator, BOT_TOKEN).start()
