@@ -22,7 +22,7 @@ class MemeGenerator:
     def get_telegram_supported_urls(self):
         subreddit = self.meme_api.subreddit("memes")
         all_posts = subreddit.top(
-            time_filter="year", limit=5, params=self.parameters)
+            time_filter="day", limit=5, params=self.parameters)
 
         self.parameters = all_posts.params
 

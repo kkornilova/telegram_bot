@@ -5,6 +5,8 @@ import threading
 import time
 import re
 
+from subscription_manager import SubscriptionManager
+from reddit_memes import MemeGenerator
 
 time_unit_to_sec_map = {
     'sec': 1,
@@ -20,11 +22,11 @@ class Bot:
                     "/help": "- help"}
 
     sent_greetings_counter = {}
-    subscribed_users = {}
 
-    def __init__(self, meme_generator, bot_token):
+    def __init__(self, meme_generator: MemeGenerator, subscription_manager: SubscriptionManager, bot_token):
         self.bot = telebot.TeleBot(bot_token)
         self.meme_generator = meme_generator
+        self.subscription_manager = subscription_manager
         self.init_commands()
 
     def start(self):
@@ -35,7 +37,7 @@ class Bot:
             commands=["start", "hello"])(self.send_welcome)
         self.bot.message_handler(commands=["help"])(self.help)
         self.bot.message_handler(
-            commands=["say_hello"])(self.get_name)
+            commands=["say_hello"])(self.get_user_name)
         self.bot.message_handler(
             commands=["cancel"])(self.cancel_command)
         self.bot.message_handler(
@@ -63,18 +65,18 @@ class Bot:
         self.bot.send_message(
             message.chat.id, f"😎 I can do many different things! Choose one of the commands below:\n{self.format_commands_map()}")
 
-    def get_name(self, message):
+    def get_user_name(self, message):
         user_id = message.from_user.id
 
-        if user_id in self.subscribed_users:
+        if self.subscription_manager.is_subscribed(user_id):
             self.bot.send_message(message.chat.id,
-                                  "Sorry, but you can get the greetings only once.\n\nStop the previous command to start the new one - /stop")
+                                  "Sorry, but you can subscribe to the greetings only once.\n\nStop subscription to start the new one - /stop")
             return
 
         msg = self.bot.send_message(message.chat.id, "How can I call you?")
-        self.bot.register_next_step_handler(msg, self.assign_name)
+        self.bot.register_next_step_handler(msg, self.check_user_name_validity)
 
-    def assign_name(self, message):
+    def check_user_name_validity(self, message):
         if message.text.startswith('/'):
             self.bot.process_new_messages([message])
             return
@@ -84,54 +86,68 @@ class Bot:
         if not re.match(name_regex, message.text):
             self.bot.reply_to(
                 message, "Sorry, only latin alphabet and numbers are acceptable. Please try again or click /stop")
-            self.bot.register_next_step_handler(message, self.assign_name)
+            self.bot.register_next_step_handler(
+                message, self.check_user_name_validity)
             return
 
-        name = message.text
-        self.request_interval(message, name)
+        self.subscription_manager.add_user_to_pending(message)
 
-    def request_interval(self, message, name):
-        sent_msg = self.bot.send_message(
-            message.chat.id, "Set the interval at which you want to receive the greetings.⏰\n\ni.e. 10 seconds, 2 minutes, 3 hours, 4 days\n\n*If you want to cancel the command - click /cancel")
-        self.bot.register_next_step_handler(
-            sent_msg, self.check_users_interval, name)
+        self.request_interval(message)
 
-    def check_users_interval(self, message, name):
+    def request_interval(self, message):
+        interval_set_instruction = "Set the interval at which you want to receive the greetings.⏰\n\ni.e. 10 seconds, 2 minutes, 3 hours, 4 days\n\n*If you want to cancel the command - click /cancel"
+
+        msg = self.bot.send_message(message.chat.id, interval_set_instruction)
+        self.bot.register_next_step_handler(msg, self.handle_interval_input)
+
+    def handle_interval_input(self, message):
+        if message.text == "/cancel":
+            self.subscription_manager.remove_user_from_pending(message)
+            self.bot.process_new_messages([message])
+            return
+
         if message.text.startswith('/'):
             self.bot.process_new_messages([message])
             return
 
-        number_regex = r'[\d]+'
-        time_regex = r'\bsec|min|hour|day'
+        interval = self.parse_valid_interval(message.text)
 
-        match_number = re.findall(number_regex, message.text)
-        match_string = re.findall(time_regex, message.text.lower())
-
-        if not match_number or not match_string:
+        if not interval:
             self.bot.send_message(
                 message.chat.id, "Please enter an interval as shown in the example!\n\ni.e. 10 seconds, 2 minutes, 3 hours, 4 days")
             self.bot.register_next_step_handler(
-                message, self.check_users_interval, name)
+                message, self.handle_interval_input)
             return
+
+        name = self.subscription_manager.remove_user_from_pending(message)
+        print(self.subscription_manager.pending_users)
+        self.subscription_manager.add_to_subscribed_users(message)
+
+        thread = threading.Thread(target=self.say_hello, args=(
+            message, name, interval))
+        thread.start()
+
+    def parse_valid_interval(self, interval):
+        number_regex = r'[\d]+'
+        time_regex = r'\bsec|min|hour|day'
+
+        match_number = re.findall(number_regex, interval)
+        match_string = re.findall(time_regex, interval.lower())
+
+        if not match_number or not match_string:
+            return False
 
         number_unit = int(match_number[0])
         time_unit_key = match_string[0]
 
-        interval_seconds = number_unit * time_unit_to_sec_map[time_unit_key]
+        interval_in_seconds = number_unit * time_unit_to_sec_map[time_unit_key]
 
-        user_id = message.from_user.id
-        username = message.from_user.username
-
-        self.subscribed_users[user_id] = username
-
-        thread = threading.Thread(target=self.say_hello, args=(
-            message, name, interval_seconds))
-        thread.start()
+        return interval_in_seconds
 
     def say_hello(self, message, name, interval_seconds):
         user_id = message.from_user.id
 
-        if user_id not in self.subscribed_users:
+        if not self.subscription_manager.is_subscribed(user_id):
             return
 
         self.bot.send_message(message.chat.id,
@@ -173,22 +189,25 @@ class Bot:
         self.show_list_of_subscribers(message)
 
     def show_list_of_subscribers(self, message):
-
-        if len(self.subscribed_users) == 0:
+        usernames = self.subscription_manager.get_all_subscribed_users().values()
+        if len(usernames) == 0:
             self.bot.send_message(
                 message.chat.id, "No subscribers at that moment")
             return
 
         sub_list = ''
-        for username in self.subscribed_users.values():
+        for username in usernames:
             sub_list += username + "\n"
         self.bot.send_message(
             message.chat.id, "Subscribers: " + "\n\n" + sub_list)
 
     def cancel_command(self, message):
         user_id = message.from_user.id
-        if user_id in self.subscribed_users:
-            self.subscribed_users.pop(user_id)
+
+        if self.subscription_manager.is_subscribed(user_id):
+            self.subscription_manager.remove_from_subscribed(user_id)
+            self.sent_greetings_counter.pop(user_id)
+
         self.bot.reply_to(
             message, "The command was successfully canceled!")
 
@@ -199,12 +218,13 @@ class Bot:
     def stop(self, message):
         user_id = message.from_user.id
 
-        if user_id not in self.subscribed_users:
+        if not self.subscription_manager.is_subscribed(user_id):
             self.bot.send_message(
                 message.chat.id, "You're not subscribed.")
             return
 
-        self.subscribed_users.pop(user_id)
+        self.subscription_manager.remove_from_subscribed(user_id)
+        self.sent_greetings_counter.pop(user_id)
 
         self.bot.send_message(
             message.chat.id, "Sending is stopped😉\n" + self.format_commands_map())
