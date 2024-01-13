@@ -15,15 +15,11 @@ class SubscriptionManager:
 
         self.pending_users[user_id] = name
 
-        print(self.pending_users)
-
     def add_to_subscribed_users(self, message):
         user_id = message.from_user.id
         username = message.from_user.username
 
         self.subscribed_users[user_id] = username
-
-        print(self.subscribed_users)
 
     def remove_user_from_pending(self, message):
         user_id = message.from_user.id

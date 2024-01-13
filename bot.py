@@ -8,6 +8,7 @@ import re
 from subscription_manager import SubscriptionManager
 from reddit_memes import MemeGenerator
 
+
 time_unit_to_sec_map = {
     'sec': 1,
     "min": 60,
@@ -18,15 +19,16 @@ time_unit_to_sec_map = {
 
 class Bot:
     commands_map = {"/get_meme": "- get meme",
-                    "/say_hello": "- get greetings regularly",
+                    "/get_motivation": "- get motivational quotes regularly",
                     "/help": "- help"}
 
-    sent_greetings_counter = {}
+    sent_quotes_counter = {}
 
-    def __init__(self, meme_generator: MemeGenerator, subscription_manager: SubscriptionManager, bot_token):
+    def __init__(self, meme_generator: MemeGenerator, subscription_manager: SubscriptionManager, quote_generator, bot_token):
         self.bot = telebot.TeleBot(bot_token)
         self.meme_generator = meme_generator
         self.subscription_manager = subscription_manager
+        self.quote_generator = quote_generator
         self.init_commands()
 
     def start(self):
@@ -37,7 +39,7 @@ class Bot:
             commands=["start", "hello"])(self.send_welcome)
         self.bot.message_handler(commands=["help"])(self.help)
         self.bot.message_handler(
-            commands=["say_hello"])(self.get_user_name)
+            commands=["get_motivation"])(self.get_user_name)
         self.bot.message_handler(
             commands=["cancel"])(self.cancel_command)
         self.bot.message_handler(
@@ -45,7 +47,7 @@ class Bot:
         self.bot.message_handler(
             commands=["stop"])(self.stop)
         self.bot.message_handler(
-            commands=["count_greetings"])(self.count_received_greetings)
+            commands=["count_motivation"])(self.count_received_quotes)
         self.bot.message_handler(
             commands=["get_list_of_subscribers"])(self.get_password)
         self.bot.message_handler(
@@ -70,7 +72,7 @@ class Bot:
 
         if self.subscription_manager.is_subscribed(user_id):
             self.bot.send_message(message.chat.id,
-                                  "Sorry, but you can subscribe to the greetings only once.\n\nStop subscription to start the new one - /stop")
+                                  "Sorry, but you can subscribe only once.\n\nStop subscription to start the new one - /stop")
             return
 
         msg = self.bot.send_message(message.chat.id, "How can I call you?")
@@ -85,7 +87,7 @@ class Bot:
 
         if not re.match(name_regex, message.text):
             self.bot.reply_to(
-                message, "Sorry, only latin alphabet and numbers are acceptable. Please try again or click /stop")
+                message, "Sorry, only latin alphabet and numbers are acceptable. Please try again or /stop")
             self.bot.register_next_step_handler(
                 message, self.check_user_name_validity)
             return
@@ -95,7 +97,7 @@ class Bot:
         self.request_interval(message)
 
     def request_interval(self, message):
-        interval_set_instruction = "Set the interval at which you want to receive the greetings.⏰\n\ni.e. 10 seconds, 2 minutes, 3 hours, 4 days\n\n*If you want to cancel the command - click /cancel"
+        interval_set_instruction = "How often do you want to receive a motivation?⏰\n\nSet an interval e.g. 10 seconds, 2 minutes, 3 hours, 4 days\n\n*If you want to cancel the command - /cancel"
 
         msg = self.bot.send_message(message.chat.id, interval_set_instruction)
         self.bot.register_next_step_handler(msg, self.handle_interval_input)
@@ -114,16 +116,16 @@ class Bot:
 
         if not interval:
             self.bot.send_message(
-                message.chat.id, "Please enter an interval as shown in the example!\n\ni.e. 10 seconds, 2 minutes, 3 hours, 4 days")
+                message.chat.id, "Please enter an interval as shown in the example!\n\ne.g. 10 seconds, 2 minutes, 3 hours, 4 days")
             self.bot.register_next_step_handler(
                 message, self.handle_interval_input)
             return
 
         name = self.subscription_manager.remove_user_from_pending(message)
-        print(self.subscription_manager.pending_users)
+
         self.subscription_manager.add_to_subscribed_users(message)
 
-        thread = threading.Thread(target=self.say_hello, args=(
+        thread = threading.Thread(target=self.get_motivation, args=(
             message, name, interval))
         thread.start()
 
@@ -144,33 +146,35 @@ class Bot:
 
         return interval_in_seconds
 
-    def say_hello(self, message, name, interval_seconds):
+    def get_motivation(self, message, name, interval_seconds):
         user_id = message.from_user.id
 
         if not self.subscription_manager.is_subscribed(user_id):
             return
 
-        self.bot.send_message(message.chat.id,
-                              f"Hello {name.title()}!❤️ \n\n to stop sending - click:  /stop,\n to see the number of received greetings - click: /count_greetings")
+        quote, author = self.quote_generator.get_quote()
 
-        if user_id in self.sent_greetings_counter:
-            self.sent_greetings_counter[user_id] += 1
+        self.bot.send_message(message.chat.id,
+                              f"Hei, {name.title()}\n\n{quote} ©\n\n{author}\n\nto stop sending - /stop,\nto see the number of received motivation - /count_motivation")
+
+        if user_id in self.sent_quotes_counter:
+            self.sent_quotes_counter[user_id] += 1
 
         else:
-            self.sent_greetings_counter[user_id] = 1
+            self.sent_quotes_counter[user_id] = 1
 
         time.sleep(interval_seconds)
-        self.say_hello(message, name, interval_seconds)
+        self.get_motivation(message, name, interval_seconds)
 
-    def count_received_greetings(self, message):
+    def count_received_quotes(self, message):
         user_id = message.from_user.id
 
-        if user_id not in self.sent_greetings_counter:
+        if user_id not in self.sent_quotes_counter:
             self.bot.send_message(message.chat.id, "You are not subscribed.")
             return
 
         self.bot.send_message(message.chat.id,
-                              f"You've got {self.sent_greetings_counter[user_id]} greeting(s).")
+                              f"You've got {self.sent_quotes_counter[user_id]} motivational boost(s).")
 
     def get_password(self, message):
         msg = self.bot.send_message(message.chat.id, "Enter password: ")
@@ -182,7 +186,7 @@ class Bot:
             return
         if message.text != os.environ.get("bot_password"):
             self.bot.send_message(message.chat.id,
-                                  "Wrong password! Try again or click /cancel")
+                                  "Wrong password! Try again or /cancel")
             self.get_password(message)
             return
 
@@ -190,7 +194,7 @@ class Bot:
 
     def show_list_of_subscribers(self, message):
         usernames = self.subscription_manager.get_all_subscribed_users().values()
-        if len(usernames) == 0:
+        if not usernames:
             self.bot.send_message(
                 message.chat.id, "No subscribers at that moment")
             return
@@ -206,7 +210,7 @@ class Bot:
 
         if self.subscription_manager.is_subscribed(user_id):
             self.subscription_manager.remove_from_subscribed(user_id)
-            self.sent_greetings_counter.pop(user_id)
+            self.sent_quotes_counter.pop(user_id)
 
         self.bot.reply_to(
             message, "The command was successfully canceled!")
@@ -224,7 +228,7 @@ class Bot:
             return
 
         self.subscription_manager.remove_from_subscribed(user_id)
-        self.sent_greetings_counter.pop(user_id)
+        self.sent_quotes_counter.pop(user_id)
 
         self.bot.send_message(
             message.chat.id, "Sending is stopped😉\n" + self.format_commands_map())
