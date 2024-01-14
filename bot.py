@@ -1,12 +1,12 @@
 import os
-
 import telebot
 import threading
 import time
 import re
 
+from reddit_memes import MemeGenerator, reddit
 from subscription_manager import SubscriptionManager
-from reddit_memes import MemeGenerator
+from quotes_generator import QuoteGenerator
 
 
 time_unit_to_sec_map = {
@@ -18,17 +18,18 @@ time_unit_to_sec_map = {
 
 
 class Bot:
+    meme_generator = MemeGenerator(reddit)
+    subscription_manager = SubscriptionManager()
+    quote_generator = QuoteGenerator()
+
     commands_map = {"/get_meme": "- get meme",
                     "/get_motivation": "- get motivational quotes regularly",
                     "/help": "- help"}
 
     sent_quotes_counter = {}
 
-    def __init__(self, meme_generator: MemeGenerator, subscription_manager: SubscriptionManager, quote_generator, bot_token):
+    def __init__(self, bot_token):
         self.bot = telebot.TeleBot(bot_token)
-        self.meme_generator = meme_generator
-        self.subscription_manager = subscription_manager
-        self.quote_generator = quote_generator
         self.init_commands()
 
     def start(self):
@@ -78,11 +79,17 @@ class Bot:
         msg = self.bot.send_message(message.chat.id, "How can I call you?")
         self.bot.register_next_step_handler(msg, self.check_user_name_validity)
 
-    def check_user_name_validity(self, message):
-        if message.text.startswith('/'):
-            self.bot.process_new_messages([message])
-            return
+    def command_listener(func):
+        def wrapper(*args):
+            self, message = args
+            if message.text.startswith('/'):
+                self.bot.process_new_messages([message])
+            else:
+                return func(self, message)
+        return wrapper
 
+    @command_listener
+    def check_user_name_validity(self, message):
         name_regex = r'^[a-zA-Z\d]+$'
 
         if not re.match(name_regex, message.text):
@@ -180,10 +187,8 @@ class Bot:
         msg = self.bot.send_message(message.chat.id, "Enter password: ")
         self.bot.register_next_step_handler(msg, self.check_password)
 
+    @command_listener
     def check_password(self, message):
-        if message.text.startswith('/'):
-            self.bot.process_new_messages([message])
-            return
         if message.text != os.environ.get("bot_password"):
             self.bot.send_message(message.chat.id,
                                   "Wrong password! Try again or /cancel")

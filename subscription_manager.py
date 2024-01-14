@@ -1,4 +1,3 @@
-
 class SubscriptionManager:
     pending_users = {}
     subscribed_users = {}
